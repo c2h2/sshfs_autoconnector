@@ -92,3 +92,4 @@ chmod +x connect_sshfs.sh
 - Use the repository owner's name for git commits, not Claude's name
 - Keep commit messages concise and descriptive
 - Make code changes directly without asking permission
+- Do not use Claude or Anthropic names in commit messages
