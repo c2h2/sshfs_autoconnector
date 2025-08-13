@@ -6,8 +6,9 @@ Automatically discover and mount remote Linux hosts via SSHFS with real-time mon
 
 1. Configure target hosts in `sshfs_hosts.txt`:
    ```
-   192.168.1.100
-   192.168.1.101
+   # hostname mount_path (relative or absolute)
+   192.168.1.100 sshfs
+   192.168.1.101 /root/custom_mount
    ```
 
 2. Run the tool:
@@ -38,8 +39,9 @@ Automatically discover and mount remote Linux hosts via SSHFS with real-time mon
 
 ## Mount Points
 
-- First host: `/root/sshfs`
-- Additional: `/root/sshfs2`, `/root/sshfs3`, etc.
+- Configurable per host in `sshfs_hosts.txt`
+- Relative paths resolved from `/root/`
+- Absolute paths used as-is
 - Remote path: `root@{host}:/root/`
 
 ## Requirements

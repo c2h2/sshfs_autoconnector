@@ -51,8 +51,9 @@ chmod +x connect_sshfs.sh
 - `print_bootstrap_status()`: Renders the live dashboard UI with host status and metrics
 
 ### Mounting Strategy
-- First host mounts to `/root/sshfs`
-- Additional hosts mount to `/root/sshfs2`, `/root/sshfs3`, etc.
+- Mount paths defined in sshfs_hosts.txt (second column)
+- Relative paths are resolved from MOUNT_BASE (/root)
+- Absolute paths are used as-is
 - Each mount connects to `root@{host}:/root/` on the remote system
 - Mount options: `cache=no,attr_timeout=0,entry_timeout=0` for real-time access
 
@@ -66,10 +67,11 @@ chmod +x connect_sshfs.sh
 
 ### sshfs_hosts.txt Format
 ```
-# Comments start with #
-192.168.26.104
-192.168.24.116
-192.168.30.119
+# Format: hostname mount_path
+# mount_path can be relative or absolute
+192.168.26.104 sshfs
+192.168.24.116 sshfs2
+192.168.30.119 /root/sshfs3
 ```
 
 ### Key Constants (connect_sshfs.sh:3-10)

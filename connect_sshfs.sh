@@ -10,21 +10,40 @@ PID_FILE="/var/run/sshfs-monitor.pid"
 DAEMON_MODE=false
 
 declare -a HOSTS
+declare -a MOUNT_PATHS
 declare -A HOST_STATS
 declare -A MOUNT_TIMES
 
 load_hosts() {
     if [ ! -f "$HOSTS_FILE" ]; then
         echo "Error: Hosts file $HOSTS_FILE not found!"
-        echo "Please create $HOSTS_FILE with one IP address per line."
+        echo "Please create $HOSTS_FILE with hostname and mount_path per line."
         exit 1
     fi
     
     HOSTS=()
+    MOUNT_PATHS=()
     while IFS= read -r line || [ -n "$line" ]; do
         line=$(echo "$line" | xargs)
         if [ -n "$line" ] && [[ ! "$line" =~ ^# ]]; then
-            HOSTS+=("$line")
+            read -r host mount_path <<< "$line"
+            if [ -n "$host" ]; then
+                HOSTS+=("$host")
+                if [ -n "$mount_path" ]; then
+                    # Handle relative paths
+                    if [[ "$mount_path" != /* ]]; then
+                        mount_path="$MOUNT_BASE/$mount_path"
+                    fi
+                    MOUNT_PATHS+=("$mount_path")
+                else
+                    # Default mount path if not specified
+                    if [ ${#HOSTS[@]} -eq 1 ]; then
+                        MOUNT_PATHS+=("$MOUNT_BASE/sshfs")
+                    else
+                        MOUNT_PATHS+=("$MOUNT_BASE/sshfs${#HOSTS[@]}")
+                    fi
+                fi
+            fi
         fi
     done < "$HOSTS_FILE"
     
@@ -276,12 +295,7 @@ print_bootstrap_status() {
     
     for i in "${!HOSTS[@]}"; do
         local host="${HOSTS[$i]}"
-        local mount_point
-        if [ $i -eq 0 ]; then
-            mount_point="sshfs"
-        else
-            mount_point="sshfs$((i + 1))"
-        fi
+        local mount_point="${MOUNT_PATHS[$i]}"
         
         ((total_hosts++))
         local badge=$(get_status_badge "$host" "$mount_point")
@@ -398,12 +412,7 @@ print_stats() {
         echo "Active mount points:"
         for i in "${!HOSTS[@]}"; do
             local host="${HOSTS[$i]}"
-            local mount_point
-            if [ $i -eq 0 ]; then
-                mount_point="sshfs"
-            else
-                mount_point="sshfs$((i + 1))"
-            fi
+            local mount_point="${MOUNT_PATHS[$i]}"
             
             if mountpoint -q "$mount_point" 2>/dev/null; then
                 local usage=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $2 " used: " $3 " (" $5 ")"}')
@@ -420,13 +429,7 @@ monitor_and_mount() {
     
     for i in "${!HOSTS[@]}"; do
         local host="${HOSTS[$i]}"
-        local mount_point
-        
-        if [ $i -eq 0 ]; then
-            mount_point="sshfs"
-        else
-            mount_point="sshfs$((i + 1))"
-        fi
+        local mount_point="${MOUNT_PATHS[$i]}"
         
         if check_host "$host"; then
             local stats="${HOST_STATS[$host]}"
