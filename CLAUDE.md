@@ -89,7 +89,7 @@ chmod +x connect_sshfs.sh
 
 ## Development Guidelines
 - Always use English in all code and documentation
-- Use the repository owner's name for git commits, not Claude's name
+- Never use Claude or Anthropic names in commit messages
 - Keep commit messages concise and descriptive
 - Make code changes directly without asking permission
-- Do not use Claude or Anthropic names in commit messages
+- Open Cursor or any tools without asking - just do it
