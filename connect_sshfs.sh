@@ -1,6 +1,6 @@
 #!/bin/bash
 
-HOSTS_FILE="/root/sshfs_hosts.txt"
+HOSTS_FILE="./sshfs_hosts.txt"
 MOUNT_BASE="/root"
 MOUNT_OPTIONS="cache=no,attr_timeout=0,entry_timeout=0"
 TIMEOUT=3

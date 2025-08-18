@@ -2,6 +2,7 @@
 # Format: hostname mount_path
 # mount_path can be relative or absolute
 # Lines starting with # are ignored
-192.168.26.104 sshfs
-192.168.24.116 sshfs2
+192.168.26.104 /root/sshfs
+192.168.32.102 /root/sshfs2
 192.168.30.119 /root/sshfs3
+192.168.39.1 /root/sshfs_sms
