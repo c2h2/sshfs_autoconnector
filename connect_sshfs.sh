@@ -11,24 +11,30 @@ DAEMON_MODE=false
 
 declare -a HOSTS
 declare -a MOUNT_PATHS
+declare -a PORTS
+declare -a REMOTE_DIRS
 declare -A HOST_STATS
 declare -A MOUNT_TIMES
 
 load_hosts() {
     if [ ! -f "$HOSTS_FILE" ]; then
         echo "Error: Hosts file $HOSTS_FILE not found!"
-        echo "Please create $HOSTS_FILE with hostname and mount_path per line."
+        echo "Please create $HOSTS_FILE with hostname, mount_path, port, and remote_dir per line."
         exit 1
     fi
     
     HOSTS=()
     MOUNT_PATHS=()
+    PORTS=()
+    REMOTE_DIRS=()
     while IFS= read -r line || [ -n "$line" ]; do
         line=$(echo "$line" | xargs)
         if [ -n "$line" ] && [[ ! "$line" =~ ^# ]]; then
-            read -r host mount_path <<< "$line"
+            read -r host mount_path port remote_dir <<< "$line"
             if [ -n "$host" ]; then
                 HOSTS+=("$host")
+                
+                # Handle mount path
                 if [ -n "$mount_path" ]; then
                     # Handle relative paths
                     if [[ "$mount_path" != /* ]]; then
@@ -42,6 +48,20 @@ load_hosts() {
                     else
                         MOUNT_PATHS+=("$MOUNT_BASE/sshfs${#HOSTS[@]}")
                     fi
+                fi
+                
+                # Handle port (default to 22)
+                if [ -n "$port" ] && [[ "$port" =~ ^[0-9]+$ ]]; then
+                    PORTS+=("$port")
+                else
+                    PORTS+=("22")
+                fi
+                
+                # Handle remote directory (default to /root)
+                if [ -n "$remote_dir" ]; then
+                    REMOTE_DIRS+=("$remote_dir")
+                else
+                    REMOTE_DIRS+=("/root")
                 fi
             fi
         fi
@@ -157,6 +177,8 @@ check_host() {
 mount_host() {
     local host=$1
     local mount_point=$2
+    local port=$3
+    local remote_dir=$4
     
     if mountpoint -q "$mount_point" 2>/dev/null; then
         if ! ls "$mount_point" >/dev/null 2>&1; then
@@ -173,14 +195,17 @@ mount_host() {
         fi
     fi
     
-    mkdir -p "$mount_point"
+    # Create mount point directory only if it doesn't exist
+    if [ ! -d "$mount_point" ]; then
+        mkdir -p "$mount_point"
+    fi
     
     local start_time=$(date +%s.%N)
-    if sshfs "root@$host:/root/" "$mount_point" -o "$MOUNT_OPTIONS" 2>/dev/null; then
+    if sshfs "root@$host:$remote_dir/" "$mount_point" -o "$MOUNT_OPTIONS,port=$port" 2>/dev/null; then
         local end_time=$(date +%s.%N)
         local mount_time=$(echo "$end_time - $start_time" | bc -l)
         MOUNT_TIMES["$host"]="$mount_time"
-        local msg="Successfully mounted: $host -> $mount_point (${mount_time}s)"
+        local msg="Successfully mounted: $host:$port -> $mount_point (${mount_time}s)"
         if [ "$DAEMON_MODE" = true ]; then
             log "$msg"
         else
@@ -191,13 +216,13 @@ mount_host() {
         local end_time=$(date +%s.%N)
         local mount_time=$(echo "$end_time - $start_time" | bc -l)
         MOUNT_TIMES["$host"]="failed_${mount_time}"
-        local msg="Failed to mount: $host (${mount_time}s)"
+        local msg="Failed to mount: $host:$port (${mount_time}s)"
         if [ "$DAEMON_MODE" = true ]; then
             log "$msg"
         else
             echo "$msg"
         fi
-        rmdir "$mount_point" 2>/dev/null
+        # Don't remove directory on mount failure - user might have files there
         return 1
     fi
 }
@@ -206,17 +231,18 @@ get_remote_info() {
     local host=$1
     local mount_point=$2
     local info_type=$3
+    local port=$4
     
     if mountpoint -q "$mount_point" 2>/dev/null; then
         case "$info_type" in
             "uptime")
-                local result=$(ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no "root@$host" "uptime | sed 's/.*up \\([^,]*\\).*/\\1/' | xargs" 2>/dev/null)
+                local result=$(ssh -p "$port" -o ConnectTimeout=2 -o StrictHostKeyChecking=no "root@$host" "uptime | sed 's/.*up \\([^,]*\\).*/\\1/' | xargs" 2>/dev/null)
                 ;;
             "hostname")
-                local result=$(ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no "root@$host" "hostname" 2>/dev/null)
+                local result=$(ssh -p "$port" -o ConnectTimeout=2 -o StrictHostKeyChecking=no "root@$host" "hostname" 2>/dev/null)
                 ;;
             "mac")
-                local result=$(ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no "root@$host" "cat /sys/class/net/eth0/address 2>/dev/null || ip link show eth0 2>/dev/null | grep -o '[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]' | head -1" 2>/dev/null)
+                local result=$(ssh -p "$port" -o ConnectTimeout=2 -o StrictHostKeyChecking=no "root@$host" "cat /sys/class/net/eth0/address 2>/dev/null || ip link show eth0 2>/dev/null | grep -o '[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]' | head -1" 2>/dev/null)
                 ;;
         esac
         
@@ -296,6 +322,8 @@ print_bootstrap_status() {
     for i in "${!HOSTS[@]}"; do
         local host="${HOSTS[$i]}"
         local mount_point="${MOUNT_PATHS[$i]}"
+        local port="${PORTS[$i]}"
+        local remote_dir="${REMOTE_DIRS[$i]}"
         
         ((total_hosts++))
         local badge=$(get_status_badge "$host" "$mount_point")
@@ -305,9 +333,9 @@ print_bootstrap_status() {
         local host_label="Host $((i+1))"
         local ping_display="${ping_time:-N/A}ms"
         
-        local remote_uptime=$(get_remote_info "$host" "$mount_point" "uptime")
-        local remote_hostname=$(get_remote_info "$host" "$mount_point" "hostname")
-        local remote_mac=$(get_remote_info "$host" "$mount_point" "mac")
+        local remote_uptime=$(get_remote_info "$host" "$mount_point" "uptime" "$port")
+        local remote_hostname=$(get_remote_info "$host" "$mount_point" "hostname" "$port")
+        local remote_mac=$(get_remote_info "$host" "$mount_point" "mac" "$port")
         
         if [ "$ping_result" -eq 0 ]; then
             ((online_hosts++))
@@ -413,10 +441,12 @@ print_stats() {
         for i in "${!HOSTS[@]}"; do
             local host="${HOSTS[$i]}"
             local mount_point="${MOUNT_PATHS[$i]}"
+            local port="${PORTS[$i]}"
+            local remote_dir="${REMOTE_DIRS[$i]}"
             
             if mountpoint -q "$mount_point" 2>/dev/null; then
                 local usage=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $2 " used: " $3 " (" $5 ")"}')
-                echo "  $mount_point -> root@$host:/root/ [$usage]"
+                echo "  $mount_point -> root@$host:$port:$remote_dir/ [$usage]"
             fi
         done
     fi
@@ -430,6 +460,8 @@ monitor_and_mount() {
     for i in "${!HOSTS[@]}"; do
         local host="${HOSTS[$i]}"
         local mount_point="${MOUNT_PATHS[$i]}"
+        local port="${PORTS[$i]}"
+        local remote_dir="${REMOTE_DIRS[$i]}"
         
         if check_host "$host"; then
             local stats="${HOST_STATS[$host]}"
@@ -442,7 +474,7 @@ monitor_and_mount() {
                 echo "  ✓ Host reachable (ping: ${ping_time}ms)"
             fi
             
-            if mount_host "$host" "$mount_point"; then
+            if mount_host "$host" "$mount_point" "$port" "$remote_dir"; then
                 ((mounted_count++))
             fi
         else
@@ -504,15 +536,33 @@ main() {
         watch)
             echo "Starting live status monitor (Press Ctrl+C to exit)..."
             trap 'printf "\033[?25h"; exit 0' SIGINT SIGTERM
+            # Fast initial load - show loading screen first
+            load_hosts
+            printf "\033[H\033[2J"
+            echo "Loading SSHFS monitor..."
             while true; do
                 monitor_and_mount >/dev/null 2>&1
                 print_bootstrap_status
-                sleep 5
+                sleep 3
             done
             ;;
         dashboard)
             monitor_and_mount >/dev/null 2>&1
             print_bootstrap_status
+            ;;
+        "")
+            # Default action when no arguments provided - run watch mode
+            echo "Starting live status monitor (Press Ctrl+C to exit)..."
+            trap 'printf "\033[?25h"; exit 0' SIGINT SIGTERM
+            # Fast initial load - show loading screen first
+            load_hosts
+            printf "\033[H\033[2J"
+            echo "Loading SSHFS monitor..."
+            while true; do
+                monitor_and_mount >/dev/null 2>&1
+                print_bootstrap_status
+                sleep 3
+            done
             ;;
         *)
             echo "SSHFS Auto-Mount Monitor"
@@ -525,8 +575,8 @@ main() {
             echo "  restart    - Restart daemon mode"
             echo "  status     - Show daemon status"
             echo "  logs       - Follow log file"
-            echo "  once       - Run once with full stats (default)"
-            echo "  watch      - Live Bootstrap-style status display"
+            echo "  once       - Run once with full stats"
+            echo "  watch      - Live Bootstrap-style status display (default)"
             echo "  dashboard  - Single Bootstrap-style status snapshot"
             echo
             load_hosts >/dev/null 2>&1 || true

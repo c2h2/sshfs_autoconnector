@@ -54,8 +54,10 @@ chmod +x connect_sshfs.sh
 - Mount paths defined in sshfs_hosts.txt (second column)
 - Relative paths are resolved from MOUNT_BASE (/root)
 - Absolute paths are used as-is
-- Each mount connects to `root@{host}:/root/` on the remote system
-- Mount options: `cache=no,attr_timeout=0,entry_timeout=0` for real-time access
+- SSH port configurable per host (third column, defaults to 22)
+- Remote directory configurable per host (fourth column, defaults to /root)
+- Each mount connects to `root@{host}:{port}:{remote_dir}/` on the remote system
+- Mount options: `cache=no,attr_timeout=0,entry_timeout=0,port={port}` for real-time access
 
 ### Daemon Operation
 - Uses PID file at `/var/run/sshfs-monitor.pid`
@@ -67,11 +69,13 @@ chmod +x connect_sshfs.sh
 
 ### sshfs_hosts.txt Format
 ```
-# Format: hostname mount_path
+# Format: hostname mount_path [port] [remote_dir]
 # mount_path can be relative or absolute
-192.168.26.104 sshfs
-192.168.24.116 sshfs2
-192.168.30.119 /root/sshfs3
+# port defaults to 22 if not specified
+# remote_dir defaults to /root if not specified
+192.168.26.104 sshfs 22 /root
+192.168.24.116 sshfs2 2222 /home/user
+192.168.30.119 /root/sshfs3 22 /var/data
 ```
 
 ### Key Constants (connect_sshfs.sh:3-10)

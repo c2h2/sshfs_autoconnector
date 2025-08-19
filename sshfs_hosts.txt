@@ -1,8 +1,10 @@
 # SSHFS Hosts Configuration
-# Format: hostname mount_path
+# Format: hostname mount_path [port] [remote_dir]
 # mount_path can be relative or absolute
+# port defaults to 22 if not specified
+# remote_dir defaults to /root if not specified
 # Lines starting with # are ignored
-192.168.26.104 /root/sshfs
-192.168.32.102 /root/sshfs2
-192.168.30.119 /root/sshfs3
-192.168.39.1 /root/sshfs_sms
+192.168.26.104 /root/sshfs 22 /root
+192.168.32.102 /root/sshfs2 22 /root
+192.168.30.119 /root/sshfs3 22 /root
+192.168.39.1 /root/sshfs_sms 22 /root
