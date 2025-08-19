@@ -4,7 +4,7 @@
 # port defaults to 22 if not specified
 # remote_dir defaults to /root if not specified
 # Lines starting with # are ignored
-192.168.26.104 /root/sshfs 22 /root
+192.168.26.104 /root/sshfs 2222 /root
 192.168.32.102 /root/sshfs2 22 /root
 192.168.30.119 /root/sshfs3 22 /root
 192.168.39.1 /root/sshfs_sms 22 /root

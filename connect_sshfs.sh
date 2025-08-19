@@ -15,6 +15,7 @@ declare -a PORTS
 declare -a REMOTE_DIRS
 declare -A HOST_STATS
 declare -A MOUNT_TIMES
+declare -A EXECUTED_COMMANDS
 
 load_hosts() {
     if [ ! -f "$HOSTS_FILE" ]; then
@@ -174,6 +175,43 @@ check_host() {
     return $result
 }
 
+clear_stale_endpoint() {
+    local mount_point=$1
+    local host=$2
+    
+    if [ ! -d "$mount_point" ]; then
+        return 0
+    fi
+    
+    # Check if it's a stale mount (directory exists but can't access it)
+    if ! ls "$mount_point" >/dev/null 2>&1; then
+        echo "Detected stale SSHFS endpoint at $mount_point, clearing..."
+        
+        # Try multiple cleanup methods
+        fusermount -u "$mount_point" 2>/dev/null
+        if [ $? -ne 0 ]; then
+            umount "$mount_point" 2>/dev/null
+        fi
+        if [ $? -ne 0 ]; then
+            umount -l "$mount_point" 2>/dev/null  # Lazy unmount
+        fi
+        
+        # Wait a moment for cleanup to complete
+        sleep 1
+        
+        # Verify cleanup worked
+        if ls "$mount_point" >/dev/null 2>&1; then
+            echo "Successfully cleared stale endpoint: $mount_point"
+            return 0
+        else
+            echo "Warning: Could not fully clear stale endpoint: $mount_point"
+            return 1
+        fi
+    fi
+    
+    return 0
+}
+
 mount_host() {
     local host=$1
     local mount_point=$2
@@ -195,12 +233,17 @@ mount_host() {
         fi
     fi
     
+    # Clear any stale endpoints first
+    clear_stale_endpoint "$mount_point" "$host"
+    
     # Create mount point directory only if it doesn't exist
     if [ ! -d "$mount_point" ]; then
         mkdir -p "$mount_point"
     fi
     
     local start_time=$(date +%s.%N)
+    local sshfs_cmd="sshfs root@$host:$remote_dir/ $mount_point -o $MOUNT_OPTIONS,port=$port"
+    EXECUTED_COMMANDS["$host"]="$sshfs_cmd"
     if sshfs "root@$host:$remote_dir/" "$mount_point" -o "$MOUNT_OPTIONS,port=$port" 2>/dev/null; then
         local end_time=$(date +%s.%N)
         local mount_time=$(echo "$end_time - $start_time" | bc -l)
@@ -450,6 +493,31 @@ print_stats() {
             fi
         done
     fi
+    echo "================================================================="
+    
+    # Debug information section
+    echo
+    echo "==================== DEBUG CONNECTION INFO ===================="
+    echo "Port Configuration:"
+    for i in "${!HOSTS[@]}"; do
+        local host="${HOSTS[$i]}"
+        local mount_point="${MOUNT_PATHS[$i]}"
+        local port="${PORTS[$i]}"
+        local remote_dir="${REMOTE_DIRS[$i]}"
+        printf "  %-18s Port: %-5s Mount: %-20s Remote: %s\n" "$host" "$port" "$mount_point" "$remote_dir"
+    done
+    
+    echo
+    echo "Actual SSHFS Commands Executed:"
+    for i in "${!HOSTS[@]}"; do
+        local host="${HOSTS[$i]}"
+        local executed_cmd="${EXECUTED_COMMANDS[$host]}"
+        if [ -n "$executed_cmd" ]; then
+            echo "  $executed_cmd"
+        else
+            echo "  $host: No command executed (host not reachable)"
+        fi
+    done
     echo "================================================================="
 }
 
