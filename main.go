@@ -22,6 +22,7 @@ type Host struct {
 	MountPath string
 	Port      int
 	RemoteDir string
+	Username  string
 }
 
 type HostResult struct {
@@ -114,11 +115,23 @@ func loadHosts() ([]Host, error) {
 			continue
 		}
 
+		// Extract username and host
+		var username, hostIP string
+		if strings.Contains(parts[0], "@") {
+			splitHost := strings.SplitN(parts[0], "@", 2)
+			username = splitHost[0]
+			hostIP = splitHost[1]
+		} else {
+			username = "root"
+			hostIP = parts[0]
+		}
+
 		host := Host{
-			IP:        parts[0],
+			IP:        hostIP,
 			MountPath: parts[1],
 			Port:      22,
 			RemoteDir: "/root",
+			Username:  username,
 		}
 
 		// Handle mount path
@@ -249,7 +262,7 @@ func getRemoteInfo(host Host, infoType string) string {
 	}
 
 	cmd = exec.Command("ssh", "-p", strconv.Itoa(host.Port), "-o", "ConnectTimeout=2", 
-		"-o", "StrictHostKeyChecking=no", fmt.Sprintf("root@%s", host.IP), sshCmd)
+		"-o", "StrictHostKeyChecking=no", fmt.Sprintf("%s@%s", host.Username, host.IP), sshCmd)
 	output, err := cmd.Output()
 	if err != nil {
 		return "N/A"
@@ -341,13 +354,13 @@ func mountHost(host Host) HostResult {
 
 	// Mount the filesystem
 	mountStart := time.Now()
-	sshfsCmd := fmt.Sprintf("sshfs root@%s:%s/ %s -o %s,port=%d",
-		host.IP, host.RemoteDir, host.MountPath, MOUNT_OPTIONS, host.Port)
+	sshfsCmd := fmt.Sprintf("sshfs %s@%s:%s/ %s -o %s,port=%d",
+		host.Username, host.IP, host.RemoteDir, host.MountPath, MOUNT_OPTIONS, host.Port)
 	
 	result.ExecutedCmd = sshfsCmd
 	
 	cmd = exec.Command("sshfs", 
-		fmt.Sprintf("root@%s:%s/", host.IP, host.RemoteDir),
+		fmt.Sprintf("%s@%s:%s/", host.Username, host.IP, host.RemoteDir),
 		host.MountPath,
 		"-o", fmt.Sprintf("%s,port=%d", MOUNT_OPTIONS, host.Port))
 	
@@ -486,17 +499,17 @@ func printBootstrapStatus(results []HostResult) {
 					usage = "[N/A]"
 				}
 				
-				fmt.Printf("  %s %s (%s) | Host: %s | Ping: %s | Mount: %s %s | Up: %s\n", 
-					badge, hostLabel, result.Host.IP, result.RemoteInfo.Hostname, pingDisplay, result.Host.MountPath, usage, result.RemoteInfo.Uptime)
+				fmt.Printf("  %s %s (%s@%s) | Host: %s | Ping: %s | Mount: %s %s | Up: %s\n", 
+					badge, hostLabel, result.Host.Username, result.Host.IP, result.RemoteInfo.Hostname, pingDisplay, result.Host.MountPath, usage, result.RemoteInfo.Uptime)
 				fmt.Printf("    %s└─ MAC: %s%s\n", colorDim, result.RemoteInfo.MAC, colorReset)
 			} else {
-				fmt.Printf("  %s %s (%s) | Host: %s | Ping: %s | Mount: Failed to connect | Up: %s\n", 
-					badge, hostLabel, result.Host.IP, result.RemoteInfo.Hostname, pingDisplay, result.RemoteInfo.Uptime)
+				fmt.Printf("  %s %s (%s@%s) | Host: %s | Ping: %s | Mount: Failed to connect | Up: %s\n", 
+					badge, hostLabel, result.Host.Username, result.Host.IP, result.RemoteInfo.Hostname, pingDisplay, result.RemoteInfo.Uptime)
 				fmt.Printf("    %s└─ MAC: %s%s\n", colorDim, result.RemoteInfo.MAC, colorReset)
 			}
 		} else {
-			fmt.Printf("  %s %s (%s) | Host: N/A | Ping: N/A | Mount: Not available | Up: N/A\n", 
-				badge, hostLabel, result.Host.IP)
+			fmt.Printf("  %s %s (%s@%s) | Host: N/A | Ping: N/A | Mount: Not available | Up: N/A\n", 
+				badge, hostLabel, result.Host.Username, result.Host.IP)
 			fmt.Printf("    %s└─ MAC: N/A%s\n", colorDim, colorReset)
 		}
 	}
@@ -557,7 +570,7 @@ func printStats(results []HostResult, totalTime time.Duration) {
 		}
 		
 		fmt.Printf("%-18s %-12s %-12s %-15s %-15s\n",
-			result.Host.IP, status, pingTimeStr, 
+			fmt.Sprintf("%s@%s", result.Host.Username, result.Host.IP), status, pingTimeStr, 
 			fmt.Sprintf("%.6fs", result.CheckTime.Seconds()), mountStatus)
 	}
 	
@@ -586,8 +599,8 @@ func printStats(results []HostResult, totalTime time.Duration) {
 						fields := strings.Fields(lines[1])
 						if len(fields) >= 5 {
 							usage := fmt.Sprintf("%s used: %s (%s)", fields[1], fields[2], fields[4])
-							fmt.Printf("  %s -> root@%s:%d:%s/ [%s]\n", 
-								result.Host.MountPath, result.Host.IP, result.Host.Port, result.Host.RemoteDir, usage)
+							fmt.Printf("  %s -> %s@%s:%d:%s/ [%s]\n", 
+								result.Host.MountPath, result.Host.Username, result.Host.IP, result.Host.Port, result.Host.RemoteDir, usage)
 						}
 					}
 				}
@@ -602,7 +615,7 @@ func printStats(results []HostResult, totalTime time.Duration) {
 	fmt.Println("Port Configuration:")
 	for _, result := range results {
 		fmt.Printf("  %-18s Port: %-5d Mount: %-20s Remote: %s\n", 
-			result.Host.IP, result.Host.Port, result.Host.MountPath, result.Host.RemoteDir)
+			fmt.Sprintf("%s@%s", result.Host.Username, result.Host.IP), result.Host.Port, result.Host.MountPath, result.Host.RemoteDir)
 	}
 	
 	fmt.Println()
@@ -611,9 +624,9 @@ func printStats(results []HostResult, totalTime time.Duration) {
 		if result.ExecutedCmd != "" && result.ExecutedCmd != "already_mounted" {
 			fmt.Printf("  %s\n", result.ExecutedCmd)
 		} else if result.ExecutedCmd == "already_mounted" {
-			fmt.Printf("  %s: Already mounted, no command executed\n", result.Host.IP)
+			fmt.Printf("  %s@%s: Already mounted, no command executed\n", result.Host.Username, result.Host.IP)
 		} else {
-			fmt.Printf("  %s: No command executed (host not reachable)\n", result.Host.IP)
+			fmt.Printf("  %s@%s: No command executed (host not reachable)\n", result.Host.Username, result.Host.IP)
 		}
 	}
 	fmt.Println("=================================================================")
@@ -840,11 +853,11 @@ func showUsage() {
 	fmt.Printf("  PID file: %s\n", PID_FILE)
 	fmt.Printf("  Hosts file: %s\n", HOSTS_FILE)
 	if len(hosts) > 0 {
-		var hostIPs []string
+		var hostEntries []string
 		for _, host := range hosts {
-			hostIPs = append(hostIPs, host.IP)
+			hostEntries = append(hostEntries, fmt.Sprintf("%s@%s", host.Username, host.IP))
 		}
-		fmt.Printf("  Hosts (%d): %s\n", len(hosts), strings.Join(hostIPs, ", "))
+		fmt.Printf("  Hosts (%d): %s\n", len(hosts), strings.Join(hostEntries, ", "))
 	} else {
 		fmt.Printf("  Hosts: Error loading from %s\n", HOSTS_FILE)
 	}

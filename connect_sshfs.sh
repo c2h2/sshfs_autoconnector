@@ -13,6 +13,7 @@ declare -a HOSTS
 declare -a MOUNT_PATHS
 declare -a PORTS
 declare -a REMOTE_DIRS
+declare -a USERNAMES
 declare -A HOST_STATS
 declare -A MOUNT_TIMES
 declare -A EXECUTED_COMMANDS
@@ -28,12 +29,22 @@ load_hosts() {
     MOUNT_PATHS=()
     PORTS=()
     REMOTE_DIRS=()
+    USERNAMES=()
     while IFS= read -r line || [ -n "$line" ]; do
         line=$(echo "$line" | xargs)
         if [ -n "$line" ] && [[ ! "$line" =~ ^# ]]; then
             read -r host mount_path port remote_dir <<< "$line"
             if [ -n "$host" ]; then
-                HOSTS+=("$host")
+                # Extract username and host
+                if [[ "$host" == *"@"* ]]; then
+                    local username="${host%@*}"
+                    local hostname="${host#*@}"
+                    USERNAMES+=("$username")
+                    HOSTS+=("$hostname")
+                else
+                    USERNAMES+=("root")
+                    HOSTS+=("$host")
+                fi
                 
                 # Handle mount path
                 if [ -n "$mount_path" ]; then
@@ -217,6 +228,7 @@ mount_host() {
     local mount_point=$2
     local port=$3
     local remote_dir=$4
+    local username=$5
     
     if mountpoint -q "$mount_point" 2>/dev/null; then
         if ! ls "$mount_point" >/dev/null 2>&1; then
@@ -242,9 +254,9 @@ mount_host() {
     fi
     
     local start_time=$(date +%s.%N)
-    local sshfs_cmd="sshfs root@$host:$remote_dir/ $mount_point -o $MOUNT_OPTIONS,port=$port"
+    local sshfs_cmd="sshfs $username@$host:$remote_dir/ $mount_point -o $MOUNT_OPTIONS,port=$port"
     EXECUTED_COMMANDS["$host"]="$sshfs_cmd"
-    if sshfs "root@$host:$remote_dir/" "$mount_point" -o "$MOUNT_OPTIONS,port=$port" 2>/dev/null; then
+    if sshfs "$username@$host:$remote_dir/" "$mount_point" -o "$MOUNT_OPTIONS,port=$port" 2>/dev/null; then
         local end_time=$(date +%s.%N)
         local mount_time=$(echo "$end_time - $start_time" | bc -l)
         MOUNT_TIMES["$host"]="$mount_time"
@@ -275,17 +287,18 @@ get_remote_info() {
     local mount_point=$2
     local info_type=$3
     local port=$4
+    local username=$5
     
     if mountpoint -q "$mount_point" 2>/dev/null; then
         case "$info_type" in
             "uptime")
-                local result=$(ssh -p "$port" -o ConnectTimeout=2 -o StrictHostKeyChecking=no "root@$host" "uptime | sed 's/.*up \\([^,]*\\).*/\\1/' | xargs" 2>/dev/null)
+                local result=$(ssh -p "$port" -o ConnectTimeout=2 -o StrictHostKeyChecking=no "$username@$host" "uptime | sed 's/.*up \\([^,]*\\).*/\\1/' | xargs" 2>/dev/null)
                 ;;
             "hostname")
-                local result=$(ssh -p "$port" -o ConnectTimeout=2 -o StrictHostKeyChecking=no "root@$host" "hostname" 2>/dev/null)
+                local result=$(ssh -p "$port" -o ConnectTimeout=2 -o StrictHostKeyChecking=no "$username@$host" "hostname" 2>/dev/null)
                 ;;
             "mac")
-                local result=$(ssh -p "$port" -o ConnectTimeout=2 -o StrictHostKeyChecking=no "root@$host" "cat /sys/class/net/eth0/address 2>/dev/null || ip link show eth0 2>/dev/null | grep -o '[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]' | head -1" 2>/dev/null)
+                local result=$(ssh -p "$port" -o ConnectTimeout=2 -o StrictHostKeyChecking=no "$username@$host" "cat /sys/class/net/eth0/address 2>/dev/null || ip link show eth0 2>/dev/null | grep -o '[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]' | head -1" 2>/dev/null)
                 ;;
         esac
         
@@ -367,6 +380,7 @@ print_bootstrap_status() {
         local mount_point="${MOUNT_PATHS[$i]}"
         local port="${PORTS[$i]}"
         local remote_dir="${REMOTE_DIRS[$i]}"
+        local username="${USERNAMES[$i]}"
         
         ((total_hosts++))
         local badge=$(get_status_badge "$host" "$mount_point")
@@ -376,9 +390,9 @@ print_bootstrap_status() {
         local host_label="Host $((i+1))"
         local ping_display="${ping_time:-N/A}ms"
         
-        local remote_uptime=$(get_remote_info "$host" "$mount_point" "uptime" "$port")
-        local remote_hostname=$(get_remote_info "$host" "$mount_point" "hostname" "$port")
-        local remote_mac=$(get_remote_info "$host" "$mount_point" "mac" "$port")
+        local remote_uptime=$(get_remote_info "$host" "$mount_point" "uptime" "$port" "$username")
+        local remote_hostname=$(get_remote_info "$host" "$mount_point" "hostname" "$port" "$username")
+        local remote_mac=$(get_remote_info "$host" "$mount_point" "mac" "$port" "$username")
         
         if [ "$ping_result" -eq 0 ]; then
             ((online_hosts++))
@@ -395,18 +409,18 @@ print_bootstrap_status() {
                             usage_bar+="░"
                         fi
                     done
-                    output+="  $badge $host_label ($host) | Host: $remote_hostname | Ping: $ping_display | Mount: $mount_point [$usage_bar ${usage}%] | Up: $remote_uptime\n"
+                    output+="  $badge $host_label ($username@$host) | Host: $remote_hostname | Ping: $ping_display | Mount: $mount_point [$usage_bar ${usage}%] | Up: $remote_uptime\n"
                     output+="    \033[2m└─ MAC: $remote_mac\033[0m\n"
                 else
-                    output+="  $badge $host_label ($host) | Host: $remote_hostname | Ping: $ping_display | Mount: $mount_point (stale) | Up: $remote_uptime\n"
+                    output+="  $badge $host_label ($username@$host) | Host: $remote_hostname | Ping: $ping_display | Mount: $mount_point (stale) | Up: $remote_uptime\n"
                     output+="    \033[2m└─ MAC: $remote_mac\033[0m\n"
                 fi
             else
-                output+="  $badge $host_label ($host) | Host: $remote_hostname | Ping: $ping_display | Mount: Failed to connect | Up: $remote_uptime\n"
+                output+="  $badge $host_label ($username@$host) | Host: $remote_hostname | Ping: $ping_display | Mount: Failed to connect | Up: $remote_uptime\n"
                 output+="    \033[2m└─ MAC: $remote_mac\033[0m\n"
             fi
         else
-            output+="  $badge $host_label ($host) | Host: N/A | Ping: N/A | Mount: Not available | Up: N/A\n"
+            output+="  $badge $host_label ($username@$host) | Host: N/A | Ping: N/A | Mount: Not available | Up: N/A\n"
             output+="    \033[2m└─ MAC: N/A\033[0m\n"
         fi
     done
@@ -486,10 +500,11 @@ print_stats() {
             local mount_point="${MOUNT_PATHS[$i]}"
             local port="${PORTS[$i]}"
             local remote_dir="${REMOTE_DIRS[$i]}"
+            local username="${USERNAMES[$i]}"
             
             if mountpoint -q "$mount_point" 2>/dev/null; then
                 local usage=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $2 " used: " $3 " (" $5 ")"}')
-                echo "  $mount_point -> root@$host:$port:$remote_dir/ [$usage]"
+                echo "  $mount_point -> $username@$host:$port:$remote_dir/ [$usage]"
             fi
         done
     fi
@@ -504,7 +519,8 @@ print_stats() {
         local mount_point="${MOUNT_PATHS[$i]}"
         local port="${PORTS[$i]}"
         local remote_dir="${REMOTE_DIRS[$i]}"
-        printf "  %-18s Port: %-5s Mount: %-20s Remote: %s\n" "$host" "$port" "$mount_point" "$remote_dir"
+        local username="${USERNAMES[$i]}"
+        printf "  %-18s Port: %-5s Mount: %-20s Remote: %s\n" "$username@$host" "$port" "$mount_point" "$remote_dir"
     done
     
     echo
@@ -530,6 +546,7 @@ monitor_and_mount() {
         local mount_point="${MOUNT_PATHS[$i]}"
         local port="${PORTS[$i]}"
         local remote_dir="${REMOTE_DIRS[$i]}"
+        local username="${USERNAMES[$i]}"
         
         if check_host "$host"; then
             local stats="${HOST_STATS[$host]}"
@@ -542,7 +559,7 @@ monitor_and_mount() {
                 echo "  ✓ Host reachable (ping: ${ping_time}ms)"
             fi
             
-            if mount_host "$host" "$mount_point" "$port" "$remote_dir"; then
+            if mount_host "$host" "$mount_point" "$port" "$remote_dir" "$username"; then
                 ((mounted_count++))
             fi
         else
